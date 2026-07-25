@@ -10,18 +10,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Claim faucet for all unclaimed wallets
+      - name: Claim faucet for all wallets
         run: |
           LOG="faucet_results.csv"
           echo "address,http_status,response" > "$LOG"
           batch=()
           count=0
+          total=0
           while IFS= read -r addr; do
             [ -z "$addr" ] && continue
             batch+=("$addr")
             if [ ${#batch[@]} -eq 20 ]; then
               ((count++))
-              echo "Batch $count: 20 wallets"
+              total=$((total + 20))
+              echo "Batch $count: 20 wallets (total: $total)"
               for a in "${batch[@]}"; do
                 (
                   resp=$(curl -s -w "\n%{http_code}" -X POST https://api.convallax.com/faucet \
@@ -38,10 +40,10 @@ jobs:
               sleep 3
             fi
           done < addresses.txt
-          # remaining
           if [ ${#batch[@]} -gt 0 ]; then
             ((count++))
-            echo "Batch $count: ${#batch[@]} wallets"
+            total=$((total + ${#batch[@]}))
+            echo "Batch $count: ${#batch[@]} wallets (total: $total)"
             for a in "${batch[@]}"; do
               (
                 resp=$(curl -s -w "\n%{http_code}" -X POST https://api.convallax.com/faucet \
@@ -55,7 +57,7 @@ jobs:
             done
             wait
           fi
-          echo "=== Done. $count batches ==="
+          echo "=== Done. $count batches, $total wallets ==="
           awk -F',' 'NR>1 {print $2}' "$LOG" | sort | uniq -c | sort -rn
       - name: Upload results
         uses: actions/upload-artifact@v4
