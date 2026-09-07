@@ -5,48 +5,37 @@ on:
     - cron: '0 3 * * *'
   workflow_dispatch:
 
+permissions:
+  contents: write
+
+concurrency:
+  group: faucet-claim
+  cancel-in-progress: false
+
 jobs:
   claim:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - name: Claim faucet for all wallets
         run: |
           LOG="faucet_results.csv"
           echo "address,http_status,response" > "$LOG"
-          batch=()
+          BATCH=5
+          SLEEP=5
+          MAX_CAP_STREAK=10
+          cap_streak=0
           count=0
           total=0
-          while IFS= read -r addr; do
-            [ -z "$addr" ] && continue
-            batch+=("$addr")
-            if [ ${#batch[@]} -eq 20 ]; then
-              count=$((count+1))
-              total=$((total + 20))
-              echo "Batch $count: 20 wallets (total: $total)"
-              for a in "${batch[@]}"; do
-                (
-                  resp=$(curl -s -w "\n%{http_code}" -X POST https://api.convallax.com/faucet \
-                    -H "Content-Type: application/json" \
-                    -d "{ \"wallet\": \"$a\" }")
-                  s=$(echo "$resp" | tail -n1)
-                  b=$(echo "$resp" | sed '$d' | tr -d '\n' | tr ',' ';')
-                  echo "$a,$s,\"$b\"" >> "$LOG"
-                  echo "  [$a] -> $s"
-                ) &
-              done
-              wait
-              batch=()
-              sleep 3
-            fi
-          done < addresses.txt
-          if [ ${#batch[@]} -gt 0 ]; then
-            count=$((count+1))
-            total=$((total + ${#batch[@]}))
-            echo "Batch $count: ${#batch[@]} wallets (total: $total)"
+          mapfile -t addrs < <(shuf addresses.txt | grep .)
+          echo "Wallets queued: ${#addrs[@]} (shuffled for daily-cap fairness)"
+          for ((i=0; i<${#addrs[@]}; i+=BATCH)); do
+            batch=("${addrs[@]:i:BATCH}")
+            before=$(wc -l < "$LOG")
             for a in "${batch[@]}"; do
               (
-                resp=$(curl -s -w "\n%{http_code}" -X POST https://api.convallax.com/faucet \
+                resp=$(curl -s -m 20 -w "\n%{http_code}" -X POST https://api.convallax.com/faucet \
                   -H "Content-Type: application/json" \
                   -d "{ \"wallet\": \"$a\" }")
                 s=$(echo "$resp" | tail -n1)
@@ -56,11 +45,36 @@ jobs:
               ) &
             done
             wait
-          fi
-          echo "=== Done. $count batches, $total wallets ==="
+            n=${#batch[@]}
+            count=$((count+1))
+            total=$((total+n))
+            fours=$(tail -n +"$((before+1))" "$LOG" | grep -c ',429,')
+            if [ "$fours" -eq "$n" ]; then
+              cap_streak=$((cap_streak+1))
+            else
+              cap_streak=0
+            fi
+            if [ "$cap_streak" -ge "$MAX_CAP_STREAK" ]; then
+              echo "Daily cap reached: $((cap_streak*n)) consecutive 429s. Stopping early after $total wallets."
+              break
+            fi
+            sleep "$SLEEP"
+          done
+          echo "=== Done. $count batches, $total wallets attempted ==="
           awk -F',' 'NR>1 {print $2}' "$LOG" | sort | uniq -c | sort -rn
-      - name: Upload results
+
+      - name: Commit results
+        run: |
+          git config user.name "faucet-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git pull --rebase origin main
+          git add faucet_results.csv
+          git diff --cached --quiet && echo "no changes" || git commit -m "faucet results: $(date -u +%Y-%m-%d %H:%M UTC) run ${GITHUB_RUN_NUMBER}"
+          git push
+
+      - name: Upload results artifact
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: faucet-results
+          name: faucet-results-${{ github.run_number }}
           path: faucet_results.csv
