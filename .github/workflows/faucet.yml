@@ -21,7 +21,7 @@ jobs:
             [ -z "$addr" ] && continue
             batch+=("$addr")
             if [ ${#batch[@]} -eq 20 ]; then
-              ((count++))
+              count=$((count+1))
               total=$((total + 20))
               echo "Batch $count: 20 wallets (total: $total)"
               for a in "${batch[@]}"; do
@@ -41,7 +41,7 @@ jobs:
             fi
           done < addresses.txt
           if [ ${#batch[@]} -gt 0 ]; then
-            ((count++))
+            count=$((count+1))
             total=$((total + ${#batch[@]}))
             echo "Batch $count: ${#batch[@]} wallets (total: $total)"
             for a in "${batch[@]}"; do
