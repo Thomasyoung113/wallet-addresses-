@@ -48,7 +48,7 @@ jobs:
             n=${#batch[@]}
             count=$((count+1))
             total=$((total+n))
-            fours=$(tail -n +"$((before+1))" "$LOG" | grep -c ',429,')
+            fours=$(tail -n +"$((before+1))" "$LOG" | grep -c ',429,' || true)
             if [ "$fours" -eq "$n" ]; then
               cap_streak=$((cap_streak+1))
             else
@@ -64,6 +64,7 @@ jobs:
           awk -F',' 'NR>1 {print $2}' "$LOG" | sort | uniq -c | sort -rn
 
       - name: Commit results
+        if: always()
         run: |
           git config user.name "faucet-bot"
           git config user.email "actions@users.noreply.github.com"
